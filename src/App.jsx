@@ -69,7 +69,18 @@ export default function App() {
   const [exportMsg, setExportMsg] = useState(null);
   const fileRef = useRef();
 
-  const fc = useMemo(() => runForecast(null, model, overrides), [model, overrides]);
+  const fc = useMemo(() => {
+    // Convert UI percentage inputs (borrGrowthPct, loanSizePct) to the decimal
+    // rates the engine expects (borrGrowth, loanSizeGrowth). Leave other lines as-is.
+    const eng = {};
+    for (const [ent, ov] of Object.entries(overrides)) {
+      const o = { ...ov };
+      if (typeof o.borrGrowthPct === "number") { o.borrGrowth = o.borrGrowthPct / 100; delete o.borrGrowthPct; }
+      if (typeof o.loanSizePct === "number") { o.loanSizeGrowth = o.loanSizePct / 100; delete o.loanSizePct; }
+      eng[ent] = o;
+    }
+    return runForecast(null, model, eng);
+  }, [model, overrides]);
   const cutoff = fc.cutoff;
   const closedThru = cutoff > 0 ? MONTHS[cutoff - 1] : "—";
 
@@ -203,7 +214,7 @@ export default function App() {
       )}
 
       <footer style={S.footer}>
-        Seasonality from 2024–2025 monthly actuals. Income & portfolio seasonally forecast; OpEx held at budget through June, run-rate from July; provisions scale with PAR&gt;30; tax at entity effective rate. Consolidated is the bottom-up sum of all entities plus eliminations.
+        Seasonality from 2024–2025 monthly actuals. Income & portfolio seasonally forecast; OpEx held at budget through June, run-rate from July; provisions scale with PAR&gt;30; tax at entity effective rate. Holding entities (BIHBV, BIFBV) forecast at YTD run-rate. Consolidated is the bottom-up sum of all entities plus eliminations, plus any group-level adjustment.
       </footer>
     </div>
   );
@@ -225,6 +236,11 @@ function ConsolBanner({ fc, expanded, onToggle, cutoff }) {
         <div style={S.consolTitle}>
           <span style={S.consolDot} />
           Consolidated BIHBV
+          {typeof fc.groupAdj === "number" && fc.groupAdj !== 0 && (
+            <span style={{ fontSize: 11, color: "var(--amber)", marginLeft: 8, fontWeight: 400 }}>
+              incl. group adjustment {fc.groupAdj >= 0 ? "+" : ""}{Math.round(fc.groupAdj).toLocaleString()}k
+            </span>
+          )}
           <span style={S.consolExpand}>{expanded ? "− collapse months" : "+ monthly detail"}</span>
         </div>
       </div>
@@ -503,8 +519,38 @@ function OpexBreakdown({ e, cutoff }) {
 function OverridePanel({ e, overrides, setOv }) {
   const baseOneOff = e.baseOneOff || 0;
   const showOneOff = baseOneOff !== 0 || (typeof overrides.oneOff === "number");
+  const seed = e.borrowerDriven ? e.borrowerDriven.seed : null;
+  const seedPct = seed ? (seed.borrGrowth * 100) : null;
   return (
     <div style={S.ovPanel}>
+      {seed && (
+        <div style={{ ...S.ovRow, flexDirection: "column", alignItems: "stretch", paddingBottom: 10, borderBottom: "1px solid var(--grid)", marginBottom: 4 }}>
+          <div style={S.ovLabel}>
+            Monthly borrower growth
+            <span style={S.ovHint}>
+              drives portfolio (× loan size ${seed.loanSize.toFixed(0)}) then revenue (interest yield {(seed.intYield*100).toFixed(0)}%). Seed from recent actual trend: {seedPct >= 0 ? "+" : ""}{seedPct.toFixed(1)}%/mo. Type a % to override.
+            </span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 4 }}>
+            <input type="number" step="0.1" placeholder={`${seedPct.toFixed(1)} (seed)`}
+              value={typeof overrides.borrGrowthPct === "number" ? overrides.borrGrowthPct : (overrides.borrGrowthPct ?? "")}
+              onChange={(ev) => setOv("borrGrowthPct", ev.target.value)} style={S.ovInput} />
+            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>% / month</span>
+          </div>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginTop: 6 }}>
+            <span style={{ ...S.ovHint, minWidth: 90 }}>Loan size trend</span>
+            <input type="number" step="0.1" placeholder="0.0 (flat)"
+              value={overrides.loanSizePct ?? ""}
+              onChange={(ev) => setOv("loanSizePct", ev.target.value)} style={{ ...S.ovInput, width: 90 }} />
+            <span style={{ color: "var(--ink-faint)", fontSize: 12 }}>% / month (optional)</span>
+          </div>
+          {e.borrowerDriven && (
+            <div style={{ fontSize: 11, color: "var(--ink-faint)", marginTop: 6 }}>
+              Year-end: {e.metrics.Borrower.monthly[11].toLocaleString(undefined,{maximumFractionDigits:0})} borrowers · GLP {fmt0(e.metrics.GLP.monthly[11])}k · revenue {fmt0(e.metrics.TotInc.fy)}k
+            </div>
+          )}
+        </div>
+      )}
       <div style={S.ovIntro}>
         Enter a full-year adjustment per line (USD'000, +/−). The tool spreads it across the remaining forecast months and re-derives tax, provisions and net profit. Actuals are never changed.
       </div>
@@ -526,6 +572,16 @@ function OverridePanel({ e, overrides, setOv }) {
           </div>
           <input type="number" placeholder={String(baseOneOff)} value={overrides.oneOff ?? ""}
             onChange={(ev) => setOv("oneOff", ev.target.value)} style={S.ovInput} />
+        </div>
+      )}
+      {e.entity === "BIHBV" && (
+        <div style={{ ...S.ovRow, paddingTop: 8, borderTop: "1px solid var(--grid)" }}>
+          <div style={S.ovLabel}>
+            Group-level adjustment
+            <span style={S.ovHint}>direct +/− to consolidated net profit for holding-level provisions or elimination impacts; flows straight to group profit (no tax, no spreading)</span>
+          </div>
+          <input type="number" placeholder="± amount" value={overrides.groupAdj ?? ""}
+            onChange={(ev) => setOv("groupAdj", ev.target.value)} style={S.ovInput} />
         </div>
       )}
       <div style={S.ovResult}>
