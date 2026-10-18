@@ -16,6 +16,8 @@ const LINE_LABELS = {
   PBT: 'profit before tax',
   Disb: 'disbursement',
   IntExpBorr: 'interest expenses on borrowings',
+  TotFinExp: 'total financial expense',
+  ECL: 'loan loss provision',
   Salary: 'salary and benefits',
   Travel: 'travel and transportation',
   TotOpEx: 'total operating expense',
